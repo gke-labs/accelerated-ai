@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-gemma-3-27b-a100
+  labels:
+    # --- Labels for selection ---
+    app: vllm-gemma-3-27b-a100
+    # --- Labels for GKE Observability ---
+    ai.gke.io/model: gemma-3-27b-it # Correct model
+    ai.gke.io/inference-server: vllm
+    examples.ai.gke.io/source: user-guide
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      # This MUST match the pod template's app label
+      app: vllm-gemma-3-27b-a100
+  template:
+    metadata:
+      labels:
+        # --- Label for selection ---
+        app: vllm-gemma-3-27b-a100
+        # --- Labels for GKE Observability ---
+        ai.gke.io/model: gemma-3-27b-it # Correct model
+        ai.gke.io/inference-server: vllm
+        examples.ai.gke.io/source: user-guide
+    spec:
+      # Tolerations are added to allow pods to be scheduled on nodes with specific taints.
+      # The "nvidia.com/gpu" toleration allows the pod to be scheduled on nodes with GPUs.
+      # The "cloud.google.com/gke-spot" toleration allows the pod to be scheduled on Spot VMs.
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
+      - key: "cloud.google.com/gke-spot"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      nodeSelector:
+        cloud.google.com/gke-accelerator: nvidia-a100-80gb
+      containers:
+      - name: vllm-server
+        image: vllm/vllm-openai:latest
+        env:
+        - name: LD_LIBRARY_PATH
+          value: "/usr/local/nvidia/lib64:/usr/local/cuda/lib64"
+        resources:
+          limits:
+            nvidia.com/gpu: 4
+        command: ["/bin/sh", "-c"]
+        args:
+          - >-
+            python3 -m vllm.entrypoints.openai.api_server
+            --model google/gemma-3-27b-it
+            --served-model-name gemma-3-27b-it
+            --tensor-parallel-size 4
+            --gpu-memory-utilization 0.95
+            --max-model-len 16384
+            --trust-remote-code
+            --host 0.0.0.0
+            --port 8000
+        ports:
+        - name: http
+          containerPort: 8000
+        env:
+        - name: VLLM_TARGET_DEVICE
+          value: "cuda"
+        - name: HUGGING_FACE_HUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: hf-secret
+              key: hf_api_token
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 120
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 10
