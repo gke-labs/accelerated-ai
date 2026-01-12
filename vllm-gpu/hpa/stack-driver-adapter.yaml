@@ -1,0 +1,246 @@
+# ---
+# Purpose: This manifest deploys the Custom Metrics Stackdriver Adapter.
+#
+# What it does:
+# The Horizontal Pod Autoscaler (HPA) cannot directly query metrics from Google
+# Cloud Monitoring (which is where Managed Prometheus stores its data). This
+# adapter acts as a bridge. It registers itself with the Kubernetes API server
+# as a provider for the custom metrics API (`custom.metrics.k8s.io`) and
+# external metrics API (`external.metrics.k8s.io`).
+#
+# When the HPA needs to check a metric value, it queries the Kubernetes API,
+# which in turn forwards the request to this adapter. The adapter then translates
+# the request into a query against the Google Cloud Monitoring API, fetches the
+# result, and returns it to the HPA.
+#
+# This file contains all the necessary components for the adapter to run:
+#   - A dedicated Namespace ('custom-metrics') to isolate the adapter.
+#   - A ServiceAccount for the adapter pod.
+#   - Numerous RBAC Roles and Bindings to grant the adapter the permissions
+#     it needs to interact with the Kubernetes API.
+#   - The Deployment that runs the adapter pod itself.
+#   - The Service that exposes the adapter within the cluster.
+#   - The APIService resources that register the adapter as a metrics provider.
+#
+# IMPORTANT: Applying this manifest is only the first step. You must also
+# configure Workload Identity to grant the adapter's ServiceAccount permission
+# to access the Google Cloud Monitoring API.
+# ---
+
+# A dedicated namespace to keep the adapter's components isolated.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: custom-metrics
+---
+# The ServiceAccount that the adapter pod will use. This SA is later linked
+# to a Google Service Account via Workload Identity.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: custom-metrics-stackdriver-adapter
+  namespace: custom-metrics
+---
+# --- RBAC Configuration ---
+# The following ClusterRoles, Roles, and Bindings grant the adapter the
+# necessary permissions to operate within the Kubernetes cluster. This includes
+# permissions to get node/pod stats and to be an aggregated API server.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: custom-metrics:system:auth-delegator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+- kind: ServiceAccount
+  name: custom-metrics-stackdriver-adapter
+  namespace: custom-metrics
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: custom-metrics-auth-reader
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: extension-apiserver-authentication-reader
+subjects:
+- kind: ServiceAccount
+  name: custom-metrics-stackdriver-adapter
+  namespace: custom-metrics
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: custom-metrics-resource-reader
+  namespace: custom-metrics
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  - nodes
+  - nodes/stats
+  verbs:
+  - get
+  - list
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: custom-metrics-resource-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: custom-metrics-resource-reader
+subjects:
+- kind: ServiceAccount
+  name: custom-metrics-stackdriver-adapter
+  namespace: custom-metrics
+---
+# --- Adapter Deployment ---
+# This is the main workload that runs the adapter container.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: custom-metrics-stackdriver-adapter
+  namespace: custom-metrics
+  labels:
+    run: custom-metrics-stackdriver-adapter
+    k8s-app: custom-metrics-stackdriver-adapter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      run: custom-metrics-stackdriver-adapter
+      k8s-app: custom-metrics-stackdriver-adapter
+  template:
+    metadata:
+      labels:
+        run: custom-metrics-stackdriver-adapter
+        k8s-app: custom-metrics-stackdriver-adapter
+        kubernetes.io/cluster-service: "true"
+    spec:
+      serviceAccountName: custom-metrics-stackdriver-adapter
+      containers:
+      # The official GKE image for the Stackdriver adapter.
+      - image: gcr.io/gke-release/custom-metrics-stackdriver-adapter:v0.16.1-gke.0
+        imagePullPolicy: Always
+        name: pod-custom-metrics-stackdriver-adapter
+        command:
+        - /adapter
+        - --use-new-resource-model=true
+        - --fallback-for-container-metrics=true
+        resources:
+          limits:
+            cpu: 250m
+            memory: 200Mi
+          requests:
+            cpu: 250m
+            memory: 200Mi
+---
+# --- Adapter Service ---
+# This service exposes the adapter's pod on a stable ClusterIP so that the
+# Kubernetes API server can reliably forward metric requests to it.
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    run: custom-metrics-stackdriver-adapter
+    k8s-app: custom-metrics-stackdriver-adapter
+    kubernetes.io/cluster-service: 'true'
+    kubernetes.io/name: Adapter
+  name: custom-metrics-stackdriver-adapter
+  namespace: custom-metrics
+spec:
+  ports:
+  - port: 443
+    protocol: TCP
+    targetPort: 443
+  selector:
+    run: custom-metrics-stackdriver-adapter
+    k8s-app: custom-metrics-stackdriver-adapter
+  type: ClusterIP
+---
+# --- API Registration ---
+# These APIService resources are the most critical part of the setup. They
+# register the adapter's Service as the handler for specific API groups.
+# When the HPA (or `kubectl top pods`) makes a request to the
+# `custom.metrics.k8s.io` or `external.metrics.k8s.io` APIs, the Kubernetes
+# API server knows to forward that request to the `custom-metrics-stackdriver-adapter` service.
+apiVersion: apiregistration.k8s.io/v1
+kind: APIService
+metadata:
+  name: v1beta1.custom.metrics.k8s.io
+spec:
+  insecureSkipTLSVerify: true
+  group: custom.metrics.k8s.io
+  groupPriorityMinimum: 100
+  versionPriority: 100
+  service:
+    name: custom-metrics-stackdriver-adapter
+    namespace: custom-metrics
+  version: v1beta1
+---
+apiVersion: apiregistration.k8s.io/v1
+kind: APIService
+metadata:
+  name: v1beta2.custom.metrics.k8s.io
+spec:
+  insecureSkipTLSVerify: true
+  group: custom.metrics.k8s.io
+  groupPriorityMinimum: 100
+  versionPriority: 200
+  service:
+    name: custom-metrics-stackdriver-adapter
+    namespace: custom-metrics
+  version: v1beta2
+---
+apiVersion: apiregistration.k8s.io/v1
+kind: APIService
+metadata:
+  name: v1beta1.external.metrics.k8s.io
+spec:
+  insecureSkipTLSVerify: true
+  group: external.metrics.k8s.io
+  groupPriorityMinimum: 100
+  versionPriority: 100
+  service:
+    name: custom-metrics-stackdriver-adapter
+    namespace: custom-metrics
+  version: v1beta1
+---
+# --- HPA Permissions ---
+# This final binding grants the HPA controller itself (which runs in the
+# `kube-system` namespace) permission to read from the `external.metrics.k8s.io`
+# API group that the adapter provides.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: external-metrics-reader
+rules:
+- apiGroups:
+  - "external.metrics.k8s.io"
+  resources:
+  - "*"
+  verbs:
+  - list
+  - get
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: external-metrics-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: external-metrics-reader
+subjects:
+- kind: ServiceAccount
+  name: horizontal-pod-autoscaler
+  namespace: kube-system
