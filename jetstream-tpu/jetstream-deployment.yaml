@@ -1,0 +1,48 @@
+# This Kubernetes Deployment runs the JetStream server, which loads the converted
+# Gemma model from GCS and serves inference requests.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jetstream-gemma-server
+  namespace: ${K8S_NAMESPACE}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jetstream-gemma-server
+  template:
+    metadata:
+      labels:
+        app: jetstream-gemma-server
+    spec:
+      # The service account is essential for Workload Identity, allowing the server
+      # to securely access the model files in GCS.
+      serviceAccountName: ${KSA_NAME}
+      tolerations:
+      - key: "cloud.google.com/gke-spot"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      # This selector ensures the deployment is scheduled on a node with the correct
+      # TPU hardware and topology.
+      nodeSelector:
+        cloud.google.com/gke-tpu-topology: 2x4
+        cloud.google.com/gke-tpu-accelerator: tpu-v5-lite-podslice
+      containers:
+      - name: jetstream-server
+        image: us-docker.pkg.dev/gke-release/jetstream-maxtext/gemma:latest
+        args:
+        - "--model_name=${MODEL_NAME}"
+        - "--tokenizer_path=${TOKENIZER_GCS_PATH}"
+        - "--checkpoint_path=${CONVERTED_MODEL_GCS_PATH}"
+        # Specifies that the server should run on TPUs.
+        - "--platform=tpu"
+        - "--http_port=9000"
+        ports:
+        - containerPort: 9000
+        resources:
+          # Requests the necessary TPU resources for model serving.
+          requests:
+            google.com/tpu: 8
+          limits:
+            google.com/tpu: 8
