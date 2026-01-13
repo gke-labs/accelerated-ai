@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-gemma-1b
+  labels:
+    app: vllm-gemma-1b
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-gemma-1b
+  template:
+    metadata:
+      labels:
+        app: vllm-gemma-1b
+        ai.gke.io/model: gemma-3-1b-it
+        ai.gke.io/inference-server: vllm
+    spec:
+      serviceAccountName: vllm-sa
+      # Tolerations are added to allow pods to be scheduled on nodes with specific taints.
+      # The "cloud.google.com/gke-spot" toleration allows the pod to be scheduled on Spot VMs.
+      tolerations:
+      - key: "cloud.google.com/gke-spot"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      initContainers:
+      - name: model-downloader
+        image: google/cloud-sdk:slim
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          set -e -x
+          echo "Copying models from GCS..."
+          gcloud storage cp -r gs://ai-llm-models/hf/gemma-3-1b-it /models/
+          echo "Model copy complete."
+        volumeMounts:
+        - name: model-cache-volume
+          mountPath: /models
+      containers:
+      - name: vllm-container
+        image: vllm/vllm-openai:v0.11.0
+        command: ["python3", "-m", "vllm.entrypoints.openai.api_server"]
+        args:
+          - "--model=/models/gemma-3-1b-it"
+          - "--max-model-len=4096"
+          - "--gpu-memory-utilization=0.85"
+        resources:
+          limits:
+            nvidia.com/gpu: "1"
+        ports:
+        - containerPort: 8000
+        volumeMounts:
+        - name: model-cache-volume
+          mountPath: /models
+        env:
+        - name: LD_LIBRARY_PATH
+          value: "/usr/local/nvidia/lib64:/usr/local/cuda/lib64"
+      volumes:
+      - name: model-cache-volume
+        persistentVolumeClaim:
+          claimName: vllm-model-cache
+      - name: gcp-sa-token
+        projected:
+          sources:
+          - serviceAccountToken:
+              path: gcp-sa-token
+              audience: gcs
+              expirationSeconds: 3600
+      nodeSelector:
+        # cloud.google.com/gke-accelerator: nvidia-tesla-a100
+        # cloud.google.com/gke-accelerator: nvidia-a100-80gb
+        # cloud.google.com/gke-accelerator: nvidia-h100-80gb
+        cloud.google.com/gke-accelerator: nvidia-l4
