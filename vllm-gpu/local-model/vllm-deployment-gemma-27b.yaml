@@ -37,7 +37,7 @@ spec:
           echo "Syncing models from GCS using gsutil rsync..."
           # Use gsutil rsync: it's multi-threaded, idempotent,
           # and can exclude the unnecessary .git directory.
-          gsutil -m rsync -r -x "\.git[/$].*" gs://ai-llm-models/hf/gemma-3-27b-it /models/gemma-3-27b-it
+          gcloud storage rsync --recursive --exclude "\.git[/$].*" gs://ai-llm-models/hf/gemma-3-27b-it /models/gemma-3-27b-it
           echo "Model sync complete."
         volumeMounts:
         - name: model-cache-volume
