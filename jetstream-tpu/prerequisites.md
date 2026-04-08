@@ -95,5 +95,5 @@ export K8S_NAMESPACE="default"
 
 After setting the environment variables, create the GCS bucket:
 ```bash
-gsutil mb -p $PROJECT_ID -l $REGION $MODEL_GCS_BUCKET
+gcloud storage buckets create --project $PROJECT_ID --location $REGION $MODEL_GCS_BUCKET
 ```

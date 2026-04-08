@@ -36,10 +36,10 @@ spec:
           set -e -x
           echo "Creating destination directory..."
           mkdir -p /models/gpt-oss-20b
-          echo "Syncing models from GCS using gsutil rsync..."
-          # Use gsutil rsync: it's multi-threaded, idempotent,
+          echo "Syncing models from GCS using gcloud storage rsync..."
+          # Use gcloud storage rsync: it's multi-threaded, idempotent,
           # and can exclude the unnecessary .git directory.
-          gsutil -m rsync -r -x "\.git[/$].*" gs://ai-llm-models/hf/gpt-oss-20b /models/gpt-oss-20b
+          gcloud storage rsync --recursive --exclude "\.git[/$].*" gs://ai-llm-models/hf/gpt-oss-20b /models/gpt-oss-20b
           echo "Model sync complete."
         volumeMounts:
         - name: model-cache-volume

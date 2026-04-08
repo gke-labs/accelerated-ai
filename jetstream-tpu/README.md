@@ -76,7 +76,7 @@ Workload Identity allows a Kubernetes Service Account (KSA) to impersonate a Goo
 2.  **Grant GCS Permissions to the GSA**:
     The GSA needs permissions to read and write to the GCS bucket where the model will be stored.
     ```bash
-    gsutil iam ch serviceAccount:${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com:objectAdmin gs://${MODEL_GCS_BUCKET_NAME}
+    gcloud storage buckets add-iam-policy-binding gs://${MODEL_GCS_BUCKET_NAME} --member="serviceAccount:${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" --role="roles/storage.objectAdmin"
     ```
 
 3.  **Create a Kubernetes Service Account (KSA)**:
@@ -234,7 +234,7 @@ gcloud iam service-accounts remove-iam-policy-binding ${GSA_NAME}@${PROJECT_ID}.
     --project=${PROJECT_ID}
 
 # Remove GCS bucket binding
-gsutil iam ch -d serviceAccount:${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com:objectAdmin gs://${MODEL_GCS_BUCKET_NAME}
+gcloud storage buckets remove-iam-policy-binding gs://${MODEL_GCS_BUCKET_NAME} --member="serviceAccount:${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" --role="roles/storage.objectAdmin"
 
 # Delete GSA
 gcloud iam service-accounts delete ${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com --project=${PROJECT_ID}
@@ -242,7 +242,7 @@ gcloud iam service-accounts delete ${GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount
 
 ### c. Delete GCS Bucket (Optional)
 ```bash
-gsutil -m rm -r gs://${MODEL_GCS_BUCKET_NAME}
+gcloud storage rm --recursive gs://${MODEL_GCS_BUCKET_NAME}
 ```
 
 ### d. Delete GKE Cluster
