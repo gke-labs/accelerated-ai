@@ -35,6 +35,8 @@ gcloud container clusters create $CLUSTER_NAME \
 For DRA to work on GKE Standard, the nodes **must** have the label `nvidia.com/gpu.present=true`. Setting this at the node-pool level ensures it persists across Spot preemptions.
 
 ### NVIDIA L4 GPU Pool
+> **Note:** L4 GPUs can often be in high demand. If `us-central1-a` has a stockout (`ZONE_RESOURCE_POOL_EXHAUSTED`), try including multiple zones: `--node-locations=us-central1-a,us-central1-b,us-central1-c`.
+
 ```bash
 gcloud container node-pools create dra-l4-pool \
     --cluster=$CLUSTER_NAME \
@@ -43,7 +45,7 @@ gcloud container node-pools create dra-l4-pool \
     --accelerator=type=nvidia-l4,count=1 \
     --spot \
     --num-nodes=1 \
-    --node-locations=us-central1-a \
+    --node-locations=us-central1-a,us-central1-b,us-central1-c \
     --node-labels=nvidia.com/gpu.present=true \
     --node-taints=nvidia.com/gpu=present:NoSchedule
 ```
@@ -101,8 +103,11 @@ kubectl patch deployment konnectivity-agent -n kube-system --type='json' -p='[{"
 
 ## 5. Deploy the vLLM Workload
 
-### Step 1: Resource Claim Template (v1 API)
+### Step 1: Device Class and Resource Claim Template
+DRA requires a `DeviceClass` to define how resources are requested and a `ResourceClaimTemplate` for the workload to use.
+
 ```bash
+kubectl apply -f gpu-device-class.yaml
 kubectl apply -f gpu-resource-claim-template.yaml
 ```
 
@@ -118,8 +123,28 @@ kubectl apply -f vllm-dra-deployment.yaml
 kubectl apply -f vllm-dra-service.yaml
 ```
 
+### Step 4: Verify Inference
+Once the pod is `Running` and the server has started (check logs for "Application startup complete"), you can test the endpoint.
+
+1. **Port-forward the service:**
+   ```bash
+   kubectl port-forward service/vllm-dra-service 8081:8081
+   ```
+
+2. **Send a request (in a new terminal):**
+   ```bash
+   curl -X POST http://localhost:8081/v1/chat/completions \
+     -H "Content-Type: application/json" \
+     -d '{
+       "model": "google/gemma-3-1b-it",
+       "messages": [{"role": "user", "content": "What is DRA in Kubernetes?"}],
+       "max_tokens": 50
+     }'
+   ```
+
 ## 6. Troubleshooting and Verification
 
-- **Verify GPU Claim:** `kubectl get resourceclaims` (Should be `allocated,reserved`)
-- **Verify GPU in Container:** `kubectl exec <pod-name> -- nvidia-smi`
+- **Verify GPU Availability (Inside Node):** `kubectl exec <pod-name> -- nvidia-smi`
+- **Verify GPU Claim:** `kubectl get resourceclaims` (Should show `allocated,reserved`)
 - **Check Driver Path:** If the Kubelet plugin fails its init-check, ensure `nvidiaDriverRoot` matches the host path (usually `/home/kubernetes/bin/nvidia` on GKE).
+- **Check Device Classes:** `kubectl get deviceclasses` (Ensure `gpu.nvidia.com` exists).
