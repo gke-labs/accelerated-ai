@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-gemma-dra-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-gemma-dra
+  template:
+    metadata:
+      labels:
+        app: vllm-gemma-dra
+    spec:
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Equal"
+        value: "present"
+        effect: "NoSchedule"
+      resourceClaims:
+      - name: gpu-claim
+        resourceClaimTemplateName: gke-gpu-claim-template
+      containers:
+      - name: inference-server
+        image: vllm/vllm-openai:latest
+        resources:
+          claims:
+          - name: gpu-claim
+        command: ["python3", "-m", "vllm.entrypoints.openai.api_server"]
+        args:
+        - --model=$(MODEL_ID)
+        - --tensor-parallel-size=1
+        - --host=0.0.0.0
+        - --port=8081
+        env:
+        - name: MODEL_ID
+          value: google/gemma-3-1b-it
+        - name: HUGGING_FACE_HUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: hf-secret
+              key: hf_token
+        volumeMounts:
+        - mountPath: /dev/shm
+          name: dshm
+      volumes:
+      - name: dshm
+        emptyDir:
+          medium: Memory
+      # No nodeSelector needed for nvidia.com/gpu as DRA handles the placement
+      # based on the ResourceClaim and DeviceClass.
