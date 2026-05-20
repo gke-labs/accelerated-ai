@@ -13,6 +13,9 @@ This section covers the foundational patterns for serving models on different ty
 -   **[Serving with vLLM on NVIDIA GPUs](./vllm-gpu/README.md)**
     This is the baseline recipe for deploying a high-performance vLLM inference server on a GKE Autopilot cluster. It demonstrates how to serve a Gemma model on a single NVIDIA L4 GPU, including the initial setup of the cluster and credentials.
 
+-   **[Advanced Resource Management with DRA](./vllm-gpu/dra/README.md)**
+    This recipe demonstrates how to use **Dynamic Resource Allocation (DRA)** for fine-grained control over GPU resources. It uses the new `ResourceClaim` syntax (required for GKE v1.36+ in the Rapid channel) to request specific GPU hardware for vLLM on Autopilot.
+
 -   **[Serving Large Models with Tensor Parallelism](./vllm-gpu/large-model/README.md)**
     This guide addresses the challenges of serving very large models (e.g., 27 billion parameters). It demonstrates how to use **tensor parallelism** to shard the model across multiple powerful GPUs (NVIDIA A100) on a single GKE node, significantly accelerating inference for demanding workloads.
 
